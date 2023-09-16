@@ -36,4 +36,10 @@ weather <- ggplot(data=bike, aes(x=factor(weather), y=count)) +
   geom_boxplot()
 
 
-(season + weather) / (tempCount + humidityCount)
+four_pane <- (season + weather) / (tempCount + humidityCount)
+
+pdf("four_pane.pdf")
+
+print(four_pane)
+
+dev.off()
