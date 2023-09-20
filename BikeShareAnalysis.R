@@ -23,7 +23,6 @@ my_recipe <- recipe(count~., data=bikeTrain) %>%
   step_time(datetime, features=c("hour", "minute")) %>%
   step_zv(all_predictors()) #removes zero-variance predictors
 
-
 prepped_recipe <- prep(my_recipe) # Sets up the preprocessing using myDataS
 bake(prepped_recipe, new_data=bikeTest)
 
@@ -98,3 +97,45 @@ bike_pois_pred <- predict(bike_pois_workflow, new_data=bikeTest) %>%
   mutate(datetime=as.character(format(datetime))) #needed for right format
 
 vroom_write(bike_pois_pred, "bike_poisson_submission.csv", delim = ',')
+
+
+
+########################
+# Penalized Regression #
+########################
+
+# transform to log
+bikeTrain_log <- bikeTrain %>%
+  mutate(count = log(count))
+
+# penalized regression recipe
+penalized_reg_recipe <- recipe(count~., data=bikeTrain_log) %>%
+  step_mutate(weather=factor(weather)) %>% #change weather to a factor
+  step_mutate(season=factor(season)) %>% #change season to a factor
+  step_time(datetime, features=c("hour", "minute")) %>%
+  step_rm(datetime) %>% # remove datetime
+  step_zv(all_predictors()) %>% #removes zero-variance predictors
+  step_dummy(all_nominal_predictors()) %>% #make dummy vars
+  step_normalize(all_numeric_predictors()) #make mean 0, sd=1
+
+# set model
+preg_model <- linear_reg(penalty = 0, mixture = 0) %>%
+  set_engine("glmnet")
+
+# create workflow
+preg_wf <- workflow() %>%
+  add_recipe(penalized_reg_recipe) %>%
+  add_model(preg_model) %>%
+  fit(data=bikeTrain_log)
+
+penalized_reg_pred <- predict(preg_wf, new_data=bikeTest) %>%
+  bind_cols(.,bikeTest) %>% # bind predictions with test data
+  select(datetime, .pred) %>% # Just keep datetime and predictions
+  rename(count = .pred) %>% # rename pred to count (for submission to Kaggle)
+  mutate(count = exp(count)) %>%
+  mutate(count = pmax(0,count)) %>% #pointwise max of (0,prediction)
+  mutate(count = ifelse(is.na(count), 0, count)) %>%
+  mutate(datetime=as.character(format(datetime))) #needed for right format
+
+vroom_write(penalized_reg_pred, "penalized_reg_submission.csv", delim = ',')
+
