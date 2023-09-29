@@ -213,6 +213,74 @@ vroom_write(tuning_pred, "tuning_pred.csv", delim = ',')
 
 
 
+####################
+# Regression Trees #
+####################
 
 
+regtree_mod <- decision_tree(tree_depth = tune(), #tune() = computer automatically figuring this out
+                        cost_complexity = tune(),
+                        min_n=tune()) %>% #Type of model
+  set_engine("rpart") %>% # Engine = What R function to use
+  set_mode("regression")
 
+regtree_recipe <- recipe(count~., data=bikeTrain_log) %>%
+  step_mutate(weather=factor(weather)) %>% #change weather to a factor
+  step_mutate(season=factor(season))  #change season to a factor
+  #  step_time(datetime, features=c("hour", "minute")) %>%
+  #step_rm(datetime, holiday) %>% # remove datetime
+  #step_zv(all_predictors()) %>% #removes zero-variance predictors
+  #step_dummy(all_nominal_predictors()) %>% #make dummy vars
+  #step_normalize(all_numeric_predictors()) #make mean 0, sd=1
+
+# set up workflow
+regtree_wf <- workflow() %>%
+  add_recipe(regtree_recipe) %>%
+  add_model(regtree_mod)
+
+L <- 5
+## Grid of values to tune over; these should be params in the model
+tuning_grid <- grid_regular(tree_depth(),
+                            cost_complexity(),
+                            min_n(),
+                            levels = L) ## L^2 total tuning possibilities
+
+K <- 5
+## Split data for CV
+folds <- vfold_cv(bikeTrain_log, v = K, repeats=1)
+
+## Run CV
+CV_results <- regtree_wf %>%
+  tune_grid(resamples=folds,
+            grid=tuning_grid,
+            metrics=metric_set(rmse, mae, rsq))
+
+## Find Best Tuning Parameters
+bestTune <- CV_results %>%
+  select_best("rmse")
+
+
+## Plot Results
+collect_metrics(CV_results) %>% # Gathers metrics into DF
+  filter(.metric=="rmse") %>%
+  ggplot(data=., aes(x=penalty, y=mean, color=factor(mixture))) +
+  geom_line()
+
+## Finalize the Workflow & fit it
+final_wf <-
+  regtree_wf %>%
+  finalize_workflow(bestTune) %>%
+  fit(data=bikeTrain_log)
+
+## Predict
+regtree_pred <- final_wf %>%
+  predict(new_data = bikeTest_new) %>%
+  bind_cols(.,bikeTest) %>% # bind predictions with test data
+  select(datetime, .pred) %>% # Just keep datetime and predictions
+  rename(count = .pred) %>% # rename pred to count (for submission to Kaggle)
+  mutate(count = exp(count)) %>%
+  mutate(count = pmax(0,count)) %>% #pointwise max of (0,prediction)
+  mutate(count = ifelse(is.na(count), 0, count)) %>%
+  mutate(datetime=as.character(format(datetime))) #needed for right format
+
+vroom_write(regtree_pred, "regtree_pred.csv", delim = ',')
